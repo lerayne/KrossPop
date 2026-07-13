@@ -1,4 +1,6 @@
-> **This is a personal fork of [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader)** with a focus on improved fonts and minimal reading stats.
+> **This is [@lerayne](https://github.com/lerayne)'s personal, work-in-progress fork of [CrossInk](https://github.com/uxjulia/CrossInk)** (itself a fork of [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader)), used for my own experiments and modifications on top of CrossInk's font/reading-stats work.
+>
+> This fork is unsupported and not seeking outside contributions — for CrossInk itself, go to [uxjulia/CrossInk](https://github.com/uxjulia/CrossInk); for the original reader, go to [crosspoint-reader/crosspoint-reader](https://github.com/crosspoint-reader/crosspoint-reader).
 
 ## What's different in this fork
 
