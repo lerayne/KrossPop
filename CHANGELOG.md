@@ -1,3 +1,9 @@
+## [Unreleased]
+
+### Fixed
+
+- Grayscale (4-color BMP) sleep screen images on X3 no longer ghost the previous reader/home screen through the new image.
+
 ## [v1.4.0] - 2026-07-10
 
 ### Added
