@@ -5,6 +5,7 @@
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <I18n.h>
+#include <Memory.h>
 
 #include <algorithm>
 
@@ -134,8 +135,6 @@ void BmpViewerActivity::onEnter() {
 
   const auto pageWidth = renderer.getScreenWidth();
   const auto pageHeight = renderer.getScreenHeight();
-  Rect popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
-  GUI.fillPopupProgress(renderer, popupRect, 20);  // Initial 20% progress
 
   if (FsHelpers::hasPngExtension(filePath)) {
     renderPngImage();
@@ -177,18 +176,99 @@ void BmpViewerActivity::onEnter() {
       const auto labels =
           mappedInput.mapLabels(tr(STR_BACK), tr(STR_SET_SLEEP_COVER), (hasPrevious ? "<" : ""), (hasNext ? ">" : ""));
 
-      GUI.fillPopupProgress(renderer, popupRect, 50);
+      const bool hasGreyscale = bitmap.hasGreyscale();
+      bool grayscaleSinglePassUsed = false;
 
       renderer.clearScreen();
-      // Assuming drawBitmap defaults to 0,0 crop if omitted, or pass explicitly: drawBitmap(bitmap, x, y, pageWidth,
-      // pageHeight, 0, 0)
-      renderer.drawBitmap(bitmap, x, y, pageWidth, pageHeight, 0, 0);
+
+      if (hasGreyscale) {
+        // Try the single SD-read-pass path first: draws the B/W base directly into
+        // the framebuffer and the LSB/MSB planes into our own buffers from one
+        // sequential read of the file, instead of drawBitmap() re-reading the whole
+        // file from SD once per plane. Only bails out for scaled images (see
+        // GfxRenderer::drawGrayscaleBitmapSinglePass) — orientation isn't a factor
+        // here since it writes full-panel buffers, not physical row-bands.
+        if (!grayscaleLsbBuffer) {
+          grayscaleLsbBuffer = makeUniqueNoThrow<uint8_t[]>(renderer.getBufferSize());
+          grayscaleMsbBuffer = makeUniqueNoThrow<uint8_t[]>(renderer.getBufferSize());
+          if (!grayscaleLsbBuffer || !grayscaleMsbBuffer) {
+            LOG_ERR("BMP", "Failed to allocate grayscale plane buffers (%zu bytes each)", renderer.getBufferSize());
+            grayscaleLsbBuffer.reset();
+            grayscaleMsbBuffer.reset();
+          }
+        }
+
+        if (grayscaleLsbBuffer && grayscaleMsbBuffer) {
+          grayscaleSinglePassUsed = renderer.drawGrayscaleBitmapSinglePass(
+              bitmap, x, y, pageWidth, pageHeight, grayscaleLsbBuffer.get(), grayscaleMsbBuffer.get());
+        }
+
+        if (!grayscaleSinglePassUsed) {
+          bitmap.rewindToData();
+        }
+      }
+
+      if (!grayscaleSinglePassUsed) {
+        // Assuming drawBitmap defaults to 0,0 crop if omitted, or pass explicitly: drawBitmap(bitmap, x, y, pageWidth,
+        // pageHeight, 0, 0)
+        renderer.drawBitmap(bitmap, x, y, pageWidth, pageHeight, 0, 0);
+      }
 
       // Draw UI hints on the base layer
       GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
-      // Single pass for non-grayscale images
 
-      renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+      if (hasGreyscale) {
+        // FAST_REFRESH only skips ghosting when the previous image was also
+        // grayscale: the driver's own grayscaleRevert() then fires first and
+        // establishes a clean baseline, making our own resync redundant. Otherwise
+        // force it ourselves. bmpViewerFastRedraw lets users disable the fast path,
+        // which can still leave faint residual ghosting over repeated switches.
+        const HalDisplay::RefreshMode baseMode = (SETTINGS.bmpViewerFastRedraw && previousImageWasGreyscale)
+                                                     ? HalDisplay::FAST_REFRESH
+                                                     : HalDisplay::HALF_REFRESH;
+        renderer.displayGrayscaleBase(baseMode);
+      } else {
+        // Single pass for non-grayscale images
+        renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+      }
+      previousImageWasGreyscale = hasGreyscale;
+
+      if (hasGreyscale && grayscaleSinglePassUsed) {
+        // The single pass wrote LSB/MSB into our own buffers, never touching the
+        // shared framebuffer, so there's nothing to store/restore around this.
+        renderer.copyGrayscaleLsbBuffers(grayscaleLsbBuffer.get());
+        renderer.copyGrayscaleMsbBuffers(grayscaleMsbBuffer.get());
+        renderer.displayGrayBuffer();
+      } else if (hasGreyscale) {
+        // Fallback path: re-reads the whole file from SD once per plane.
+        // The LSB/MSB passes below reuse the shared framebuffer and leave it holding
+        // GRAYSCALE_MSB-mode content, not the base B/W image + button hints. Snapshot
+        // the base here and restore it after, or a later plain displayBuffer() call
+        // (e.g. the power button's FORCE_REFRESH) redisplays that stale, wrong-mode
+        // content instead of the image actually on screen.
+        const bool bwBufferStored = renderer.storeBwBuffer();
+        if (!bwBufferStored) {
+          LOG_ERR("BMP", "Failed to store BW buffer before grayscale render");
+        }
+
+        bitmap.rewindToData();
+        renderer.clearScreen(0x00);
+        renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
+        renderer.drawBitmap(bitmap, x, y, pageWidth, pageHeight, 0, 0);
+        renderer.copyGrayscaleLsbBuffers();
+
+        bitmap.rewindToData();
+        renderer.clearScreen(0x00);
+        renderer.setRenderMode(GfxRenderer::GRAYSCALE_MSB);
+        renderer.drawBitmap(bitmap, x, y, pageWidth, pageHeight, 0, 0);
+        renderer.copyGrayscaleMsbBuffers();
+
+        renderer.displayGrayBuffer();
+        if (bwBufferStored) {
+          renderer.restoreBwBuffer();
+        }
+        renderer.setRenderMode(GfxRenderer::BW);
+      }
 
     } else {
       // Handle file parsing error
@@ -206,6 +286,17 @@ void BmpViewerActivity::onExit() {
   Activity::onExit();
   renderer.clearScreen();
   renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+}
+
+bool BmpViewerActivity::forceCleanGrayscaleRefresh() {
+  if (!previousImageWasGreyscale) {
+    // Not grayscale — the generic plain-B/W FORCE_REFRESH already handles this.
+    return false;
+  }
+  // Forces onEnter() onto the HALF_REFRESH clean-base path instead of FAST_REFRESH.
+  previousImageWasGreyscale = false;
+  onEnter();
+  return true;
 }
 
 void BmpViewerActivity::doSetSleepCover() {

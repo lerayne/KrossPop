@@ -677,6 +677,25 @@ void GfxRenderer::drawPixel(const int x, const int y, const bool state) const {
   }
 }
 
+void GfxRenderer::setPixelInFullBuffer(uint8_t* target, const int x, const int y, const bool state) const {
+  int phyX = 0;
+  int phyY = 0;
+  rotateCoordinates(orientation, x, y, &phyX, &phyY, panelWidth, panelHeight);
+
+  if (phyX < 0 || phyX >= panelWidth || phyY < 0 || phyY >= panelHeight) {
+    return;
+  }
+
+  const uint32_t byteIndex = static_cast<uint32_t>(phyY) * panelWidthBytes + (phyX / 8);
+  const uint8_t bitPosition = 7 - (phyX % 8);  // MSB first
+
+  if (state) {
+    target[byteIndex] &= ~(1 << bitPosition);  // Clear bit
+  } else {
+    target[byteIndex] |= 1 << bitPosition;  // Set bit
+  }
+}
+
 namespace {
 const char* resolveVisualText(const char* text, std::string& visualBuffer, const BidiUtils::BidiBaseDir baseDir) {
   if (!text || *text == '\0') return text;
@@ -1758,6 +1777,75 @@ void GfxRenderer::drawBitmap1Bit(const Bitmap& bitmap, const int x, const int y,
   }
 }
 
+bool GfxRenderer::drawGrayscaleBitmapSinglePass(const Bitmap& bitmap, const int x, const int y, const int maxWidth,
+                                                const int maxHeight, uint8_t* lsbBuffer, uint8_t* msbBuffer) const {
+  if (fontCacheManager_ && fontCacheManager_->isScanning()) return false;
+  if (!bitmap.hasGreyscale()) return false;
+  // Scaling would require handling multiple bitmap rows mapping to one screen
+  // row (or vice versa) for three simultaneous targets instead of one; not
+  // worth the complexity for what's normally purpose-sized art. Caller falls
+  // back to the drawBitmap()-per-plane path for anything that needs scaling.
+  if (bitmap.getWidth() > maxWidth || bitmap.getHeight() > maxHeight) return false;
+
+  BitmapScratchLock scratchLock(*this);
+  if (!scratchLock.isLocked()) return false;
+
+  const int outputRowSize = (bitmap.getWidth() + 3) / 4;
+  if (!ensureBitmapScratchBuffers(outputRowSize, bitmap.getRowBytes())) {
+    return false;
+  }
+  auto* outputRow = bitmapScratchOutputRow_;
+  auto* rowBytes = bitmapScratchRowBytes_;
+
+  // lsbBuffer/msbBuffer are caller-owned and reused call-to-call (not reallocated
+  // per image), so previously-set bits must be cleared here — otherwise a bit
+  // this image never sets but a prior image did stays set, ghosting gray-plane
+  // content from whatever was drawn last time through these same buffers.
+  memset(lsbBuffer, 0x00, frameBufferSize);
+  memset(msbBuffer, 0x00, frameBufferSize);
+
+  const int width = bitmap.getWidth();
+  const int height = bitmap.getHeight();
+  const bool topDown = bitmap.isTopDown();
+  const int screenWidth = getScreenWidth();
+  const int screenHeight = getScreenHeight();
+
+  for (int bmpY = 0; bmpY < height; bmpY++) {
+    // Read this row from SD exactly once; the base/LSB/MSB decision below is
+    // derived from the same decoded row instead of three separate re-reads.
+    if (bitmap.readNextRow(outputRow, rowBytes) != BmpReaderError::Ok) {
+      LOG_ERR("GFX", "Failed to read row %d for single-pass grayscale draw", bmpY);
+      return false;
+    }
+
+    const int screenY = y + (topDown ? bmpY : height - 1 - bmpY);
+    if (screenY < 0 || screenY >= screenHeight) {
+      continue;  // keep reading to stay in sync with the file's row order
+    }
+
+    for (int bmpX = 0; bmpX < width; bmpX++) {
+      const int screenX = x + bmpX;
+      if (screenX < 0 || screenX >= screenWidth) {
+        continue;
+      }
+
+      const uint8_t val = outputRow[bmpX / 4] >> (6 - ((bmpX * 2) % 8)) & 0x3;
+
+      if (val < 3) {
+        setPixelInFullBuffer(frameBuffer, screenX, screenY, true);
+      }
+      if (val == 1 || val == 2) {
+        setPixelInFullBuffer(msbBuffer, screenX, screenY, false);
+      }
+      if (val == 1) {
+        setPixelInFullBuffer(lsbBuffer, screenX, screenY, false);
+      }
+    }
+  }
+
+  return true;
+}
+
 void GfxRenderer::drawPerspectiveBitmap(const Bitmap& bitmap, const int x, const int y, const int w, const int hL,
                                         const int hR) const {
   if (fontCacheManager_ && fontCacheManager_->isScanning()) return;
@@ -2445,6 +2533,10 @@ void GfxRenderer::preconditionGrayscale(int x, int y, int w, int h) const {
 void GfxRenderer::copyGrayscaleLsbBuffers() const { display.copyGrayscaleLsbBuffers(frameBuffer); }
 
 void GfxRenderer::copyGrayscaleMsbBuffers() const { display.copyGrayscaleMsbBuffers(frameBuffer); }
+
+void GfxRenderer::copyGrayscaleLsbBuffers(const uint8_t* buffer) const { display.copyGrayscaleLsbBuffers(buffer); }
+
+void GfxRenderer::copyGrayscaleMsbBuffers(const uint8_t* buffer) const { display.copyGrayscaleMsbBuffers(buffer); }
 
 void GfxRenderer::displayGrayBuffer(const bool turnOffScreen) const {
   display.displayGrayBuffer(fadingFix || turnOffScreen);

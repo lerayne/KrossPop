@@ -117,6 +117,7 @@ class ActivityManager {
   bool isHomeActivity() const;
   bool isReaderActivity() const;
   bool canSnapshotForSleepOverlay() const;
+  bool forceCleanGrayscaleRefresh();
   bool skipLoopDelay() const;
   std::string getCurrentBookPath() const;
   ScreenshotInfo getScreenshotInfo() const;

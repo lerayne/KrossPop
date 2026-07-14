@@ -100,6 +100,11 @@ class GfxRenderer {
   void freeBitmapScratchBuffers();
   bool ensureBitmapScratchBuffers(size_t outputRowSize, size_t rowBytesSize) const;
   bool bitmapScratchLockHeldByCurrentTask() const;
+  // Rotates logical (x,y) to physical panel coordinates and sets/clears the bit
+  // in an explicit full-panel-sized target buffer. Same math as drawPixel(),
+  // but for a caller-supplied buffer instead of frameBuffer/the strip target —
+  // used by drawGrayscaleBitmapSinglePass() to write the LSB/MSB planes.
+  void setPixelInFullBuffer(uint8_t* target, int x, int y, bool state) const;
   template <Color color>
   void drawPixelDither(int x, int y) const;
   template <Color color>
@@ -213,6 +218,14 @@ class GfxRenderer {
   void drawBitmap(const Bitmap& bitmap, int x, int y, int maxWidth, int maxHeight, float cropX = 0,
                   float cropY = 0) const;
   void drawBitmap1Bit(const Bitmap& bitmap, int x, int y, int maxWidth, int maxHeight) const;
+  // Draws a grayscale bitmap in one SD read pass: the B/W base goes into the
+  // framebuffer, LSB/MSB planes into lsbBuffer/msbBuffer (caller-owned,
+  // getBufferSize() bytes each) — instead of drawBitmap() re-reading the file
+  // once per plane. Pass the results to copyGrayscaleLsbBuffers(buffer)/
+  // copyGrayscaleMsbBuffers(buffer) afterward. Only handles unscaled, uncropped
+  // bitmaps; returns false otherwise so the caller can fall back.
+  bool drawGrayscaleBitmapSinglePass(const Bitmap& bitmap, int x, int y, int maxWidth, int maxHeight,
+                                     uint8_t* lsbBuffer, uint8_t* msbBuffer) const;
   // Trapezoidal blit used by Flow/iPod-style carousels. Fits the bitmap into a
   // bounding box of width `w` and height `max(hL, hR)` whose top-left is (x, y).
   void drawPerspectiveBitmap(const Bitmap& bitmap, int x, int y, int w, int hL, int hR) const;
@@ -266,6 +279,10 @@ class GfxRenderer {
                             bool turnOffScreen = false) const;
   void copyGrayscaleLsbBuffers() const;
   void copyGrayscaleMsbBuffers() const;
+  // Explicit-buffer overloads for drawGrayscaleBitmapSinglePass()'s caller-owned
+  // lsbBuffer/msbBuffer, instead of the no-arg overloads' implicit frameBuffer source.
+  void copyGrayscaleLsbBuffers(const uint8_t* buffer) const;
+  void copyGrayscaleMsbBuffers(const uint8_t* buffer) const;
   void displayGrayBuffer(bool turnOffScreen = false) const;
   void writeGrayscalePlaneStrip(bool lsbPlane, const uint8_t* scratch, int yStart, int numRows) const;
   bool supportsStripGrayscale() const;

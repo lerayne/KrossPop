@@ -404,6 +404,9 @@ class CrossPointSettings {
   uint8_t recentBooksView = RECENT_BOOKS_LIST;
   // Sunlight fading compensation
   uint8_t fadingFix = 0;
+  // Use FAST_REFRESH instead of HALF_REFRESH between consecutive grayscale BMPs
+  // in the image viewer. Faster, but can leave faint residual ghosting over time.
+  uint8_t bmpViewerFastRedraw = 1;
   // Quick-return from footnotes when a footnote shortcut is active.
   uint8_t pwrBtnFootnoteBack = 1;
   // Use book's embedded CSS styles for EPUB rendering (1 = enabled, 0 = disabled)

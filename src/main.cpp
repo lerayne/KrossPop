@@ -476,7 +476,11 @@ bool handleGlobalPowerButtonAction(const CrossPointSettings::SHORT_PWRBTN action
     case CrossPointSettings::SHORT_PWRBTN::FORCE_REFRESH: {
       LOG_DBG("MAIN", "Manual screen refresh triggered");
       RenderLock lock;
-      renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+      // Let the current activity handle a grayscale-aware clean redraw first;
+      // fall back to a plain B/W refresh if it doesn't need to.
+      if (!activityManager.forceCleanGrayscaleRefresh()) {
+        renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+      }
       return true;
     }
     case CrossPointSettings::SHORT_PWRBTN::SCREENSHOT: {

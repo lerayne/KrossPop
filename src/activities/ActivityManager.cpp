@@ -307,6 +307,10 @@ bool ActivityManager::canSnapshotForSleepOverlay() const {
   return currentActivity && currentActivity->canSnapshotForSleepOverlay();
 }
 
+bool ActivityManager::forceCleanGrayscaleRefresh() {
+  return currentActivity && currentActivity->forceCleanGrayscaleRefresh();
+}
+
 bool ActivityManager::skipLoopDelay() const { return currentActivity && currentActivity->skipLoopDelay(); }
 
 std::string ActivityManager::getCurrentBookPath() const {

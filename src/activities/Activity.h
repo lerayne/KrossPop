@@ -50,6 +50,10 @@ class Activity {
   virtual bool isReaderActivity() const { return false; }
   virtual bool allowPowerAsConfirmInReaderMode() const { return false; }
   virtual bool canSnapshotForSleepOverlay() const { return false; }
+  // Called by the power button's FORCE_REFRESH shortcut before its generic
+  // displayBuffer(HALF_REFRESH) fallback. Return true to force a full clean
+  // redraw (e.g. re-applying a grayscale nudge) and skip that fallback.
+  virtual bool forceCleanGrayscaleRefresh() { return false; }
   virtual std::string getCurrentBookPath() const { return {}; }
   virtual ScreenshotInfo getScreenshotInfo() const { return {}; }
 

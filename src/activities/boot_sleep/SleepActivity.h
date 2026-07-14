@@ -1,4 +1,5 @@
 #pragma once
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -32,4 +33,10 @@ class SleepActivity final : public Activity {
   bool overlayBackgroundBufferStored = false;
   std::string currentBookPath;
   bool fromTimeout = false;
+
+  // Full-panel-sized LSB/MSB grayscale plane buffers for
+  // GfxRenderer::drawGrayscaleBitmapSinglePass(); mutable since
+  // renderBitmapSleepScreen() is const. Allocated once on first use.
+  mutable std::unique_ptr<uint8_t[]> grayscaleLsbBuffer;
+  mutable std::unique_ptr<uint8_t[]> grayscaleMsbBuffer;
 };

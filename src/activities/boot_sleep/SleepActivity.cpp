@@ -6,6 +6,7 @@
 #include <HalClock.h>
 #include <HalStorage.h>
 #include <I18n.h>
+#include <Memory.h>
 #include <PNGdec.h>
 #include <Xtc.h>
 
@@ -582,8 +583,35 @@ void SleepActivity::renderBitmapSleepScreen(const Bitmap& bitmap) const {
 
   const bool hasGreyscale = bitmap.hasGreyscale() &&
                             SETTINGS.sleepScreenCoverFilter == CrossPointSettings::SLEEP_SCREEN_COVER_FILTER::NO_FILTER;
+  bool grayscaleSinglePassUsed = false;
 
-  renderer.drawBitmap(bitmap, x, y, pageWidth, pageHeight, cropX, cropY);
+  if (hasGreyscale) {
+    // Single SD-read-pass path (see GfxRenderer::drawGrayscaleBitmapSinglePass):
+    // bails out on its own for scaled/cropped bitmaps, which is exactly when
+    // cropX/cropY are nonzero here, so no extra check is needed to skip it then.
+    if (!grayscaleLsbBuffer) {
+      grayscaleLsbBuffer = makeUniqueNoThrow<uint8_t[]>(renderer.getBufferSize());
+      grayscaleMsbBuffer = makeUniqueNoThrow<uint8_t[]>(renderer.getBufferSize());
+      if (!grayscaleLsbBuffer || !grayscaleMsbBuffer) {
+        LOG_ERR("SLP", "Failed to allocate grayscale plane buffers (%zu bytes each)", renderer.getBufferSize());
+        grayscaleLsbBuffer.reset();
+        grayscaleMsbBuffer.reset();
+      }
+    }
+
+    if (grayscaleLsbBuffer && grayscaleMsbBuffer) {
+      grayscaleSinglePassUsed = renderer.drawGrayscaleBitmapSinglePass(bitmap, x, y, pageWidth, pageHeight,
+                                                                       grayscaleLsbBuffer.get(), grayscaleMsbBuffer.get());
+    }
+
+    if (!grayscaleSinglePassUsed) {
+      bitmap.rewindToData();
+    }
+  }
+
+  if (!grayscaleSinglePassUsed) {
+    renderer.drawBitmap(bitmap, x, y, pageWidth, pageHeight, cropX, cropY);
+  }
 
   if (SETTINGS.sleepScreenCoverFilter == CrossPointSettings::SLEEP_SCREEN_COVER_FILTER::INVERTED_BLACK_AND_WHITE) {
     renderer.invertScreen();
@@ -597,7 +625,12 @@ void SleepActivity::renderBitmapSleepScreen(const Bitmap& bitmap) const {
     renderer.displayBuffer(HalDisplay::FULL_REFRESH, TURN_OFF_SCREEN_AFTER_SLEEP_REFRESH);
   }
 
-  if (hasGreyscale) {
+  if (hasGreyscale && grayscaleSinglePassUsed) {
+    // The single pass already wrote LSB/MSB into our own buffers.
+    renderer.copyGrayscaleLsbBuffers(grayscaleLsbBuffer.get());
+    renderer.copyGrayscaleMsbBuffers(grayscaleMsbBuffer.get());
+    renderer.displayGrayBuffer(TURN_OFF_SCREEN_AFTER_SLEEP_REFRESH);
+  } else if (hasGreyscale) {
     bitmap.rewindToData();
     renderer.clearScreen(0x00);
     renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
