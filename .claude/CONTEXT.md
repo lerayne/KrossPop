@@ -5,7 +5,8 @@ Keep this file focused on repo-specific gotchas that are worth reusing in future
 ## Simulator
 
 - Simulator patches belong in the adjacent `crosspoint-simulator` repo.
-- The valid local simulator env in this repo is `simulator`, and `pio run -e simulator` currently builds cleanly.
+- The valid local simulator env in this repo is `simulator`.
+- Known broken as of 2026-07-25: `pio run -e simulator` fails compiling `src/activities/network/WifiSelectionActivity.cpp` — it calls `WiFi.disconnect(false, false, 1000)` (3 args), but the simulator's stubbed `WiFi.h` (from the unpinned `crosspoint-simulator` `lib_deps`) only declares a 2-arg `disconnect(bool wifioff, bool eraseap)`. Pre-existing, unrelated to KrossPop/Rust work — not yet fixed.
 - The simulator `PNGdec` stub in `crosspoint-simulator/src/PNGdec.h` needs to mirror the real API shape used by app code, including `hasAlpha()` and `getTransparentColor()`, even though decode still fails intentionally.
 - Known simulator limits:
   - No image rendering: `platformio.ini` ignores `hal`, `PNGdec`, and `JPEGDEC`, so image decoders are intentionally absent.

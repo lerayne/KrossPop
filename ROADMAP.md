@@ -325,6 +325,16 @@ technical necessity: see Open Questions/rationale below.
   integration — Arduino-ESP32's pinned ESP-IDF version/sdkconfig potentially
   conflicting with a Rust toolchain that wants to build/own its own ESP-IDF —
   because there's no second ESP-IDF instance to reconcile.
+- **Simulator support, with no per-call-site conditional compilation:** because
+  the crate is platform-agnostic by design, `scripts/build_rust.py` compiles
+  it for the ESP32-C3's RISC-V target in real firmware envs (`[base]`) and for
+  the host's native target in `[env:simulator]` — same source, two targets,
+  selected by which PlatformIO env is building. This means C++ call sites
+  never need `#ifndef SIMULATOR` guarding; there's always a working
+  implementation linked in. That stops working the moment a Rust function
+  needs something ESP-IDF-only (see the wrapper-function entry below) — such
+  a function would need its own simulator-side stand-in, on a case-by-case
+  basis, not a blanket guard.
 - **No `alloc` initially, and this is confirmed additive, not a lock-in:**
   functions borrow caller-owned `&[u8]` in, return fixed-size data out — no
   `Vec`/`String`/`Box`. This avoids needing a `#[global_allocator]` wired to
@@ -363,7 +373,14 @@ technical necessity: see Open Questions/rationale below.
   `extern "C"` boundary (`src/rust_bridge/KrosspopCoreFfi.h`), and confirmed
   at boot over serial: `krosspop_poc_add(2, 3) = 5`. Firmware size impact was negligible
   (5,493,904 / 6,553,600 bytes, ~83.8% of the `app0` partition — comparable to
-  pre-Rust size). Next step: design the real DB-engine FFI functions (record
+  pre-Rust size). `scripts/build_rust.py` now also builds the same crate for
+  the host target and is wired into `[env:simulator]` — confirmed correctly
+  detecting the env and linking the host-built lib (`KrossPop Rust core
+  linked (host): ...`), but a full `pio run -e simulator` couldn't be
+  verified end-to-end: it currently fails on an unrelated pre-existing bug
+  (see `.claude/CONTEXT.md`'s Simulator section — a `WifiSelectionActivity.cpp`
+  vs. simulator `WiFi.h` stub mismatch), unrelated to this work. Next step:
+  design the real DB-engine FFI functions (record
   parsing, weighted draw, reservoir sampling) and remove the trivial POC call
   once real functionality replaces it.
 - **`AGENTS.md` follow-up, not yet done:** once the POC and the policy

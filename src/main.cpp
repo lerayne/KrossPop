@@ -715,10 +715,8 @@ void setup() {
   LOG_INF("BOOT", "Reset diagnostic: reset=%d(%s) sleepWake=%d(%s)", static_cast<int>(rawResetReason),
           resetReasonName(rawResetReason), static_cast<int>(rawWakeupCause), wakeupCauseName(rawWakeupCause));
 
-#ifndef SIMULATOR
-  // KrossPop Rust FFI POC — remove once verified on hardware.
+  // KrossPop Rust FFI POC — remove once verified on hardware/simulator.
   LOG_INF("KROSSPOP", "Rust FFI POC: krosspop_poc_add(2, 3) = %d", krosspop_poc_add(2, 3));
-#endif
 
   // Read-and-clear so a panic later in setup() doesn't loop into silent reboot.
   // Bound the target range too — RTC_NOINIT memory is uninitialized on cold boot.

@@ -1,19 +1,22 @@
 """
 PlatformIO pre-build script: compile the KrossPop Rust core (rust/krosspop_core)
-to a static library for the ESP32-C3's RISC-V target, and link it into the
-firmware. See ROADMAP.md's "Rust Integration" section for the full rationale
-(why this stays a separate no_std static lib rather than esp-idf-sys/hal).
+to a static library and link it into the build. See ROADMAP.md's "Rust
+Integration" section for the full rationale (why this stays a separate no_std,
+alloc-free static lib rather than esp-idf-sys/hal).
 
-Only wired into [base] extra_scripts (real firmware envs) — never
-[env:simulator], which builds natively for the host and cannot link a
-riscv32imc object file.
+Wired into both [base] (real firmware envs: default/debug/tiny/xlarge) and
+[env:simulator]. The crate makes zero ESP-IDF/std calls, so it's portable to
+any target Rust supports — real firmware envs build it for the ESP32-C3's
+RISC-V target, and the simulator env builds the same source for the host's
+native target instead. This means app code never needs to conditionally
+compile around calling into it (no `#ifndef SIMULATOR` needed per call site).
 """
 
 import os
 import subprocess
 import sys
 
-RUST_TARGET = 'riscv32imc-unknown-none-elf'
+FIRMWARE_RUST_TARGET = 'riscv32imc-unknown-none-elf'
 CRATE_NAME = 'krosspop_core'
 
 
@@ -30,12 +33,17 @@ def build_rust_lib(env):
         warn(f'{manifest_path} not found; skipping Rust build')
         return
 
+    # The simulator builds natively for the host (platform = native in
+    # platformio.ini); real firmware envs target the ESP32-C3's RISC-V core.
+    is_simulator = env['PIOENV'] == 'simulator'
+    rust_target = None if is_simulator else FIRMWARE_RUST_TARGET
+
+    cargo_cmd = ['cargo', 'build', '--release', '--manifest-path', manifest_path]
+    if rust_target:
+        cargo_cmd += ['--target', rust_target]
+
     try:
-        subprocess.run(
-            ['cargo', 'build', '--release', '--target', RUST_TARGET,
-             '--manifest-path', manifest_path],
-            check=True,
-        )
+        subprocess.run(cargo_cmd, check=True)
     except FileNotFoundError:
         warn('cargo not found on PATH; skipping Rust build')
         return
@@ -43,7 +51,10 @@ def build_rust_lib(env):
         warn(f'cargo build failed (exit {e.returncode})')
         raise
 
-    lib_dir = os.path.join(crate_dir, 'target', RUST_TARGET, 'release')
+    # Host builds (no --target) put output straight under target/release;
+    # cross builds nest it under target/<triple>/release.
+    release_subdir = 'release' if rust_target is None else os.path.join(rust_target, 'release')
+    lib_dir = os.path.join(crate_dir, 'target', release_subdir)
     lib_path = os.path.join(lib_dir, f'lib{CRATE_NAME}.a')
     if not os.path.isfile(lib_path):
         warn(f'expected static lib not found at {lib_path}')
@@ -51,7 +62,7 @@ def build_rust_lib(env):
 
     env.Append(LIBPATH=[lib_dir])
     env.Append(LIBS=[CRATE_NAME])
-    print(f'KrossPop Rust core linked: {lib_path}')
+    print(f'KrossPop Rust core linked ({rust_target or "host"}): {lib_path}')
 
 
 try:
