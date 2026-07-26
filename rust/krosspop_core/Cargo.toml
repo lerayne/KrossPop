@@ -4,9 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [lib]
-# Compiled to a plain static library so it can be linked into the existing
-# C++/PlatformIO firmware build via a C ABI boundary — see ROADMAP.md's
-# "Rust Integration" section for the full rationale.
+# Linked into the C++ firmware via a C ABI boundary — see ROADMAP.md.
 crate-type = ["staticlib"]
 
 [profile.dev]

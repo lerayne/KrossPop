@@ -1,15 +1,9 @@
 """
-PlatformIO pre-build script: compile the KrossPop Rust core (rust/krosspop_core)
-to a static library and link it into the build. See ROADMAP.md's "Rust
-Integration" section for the full rationale (why this stays a separate no_std,
-alloc-free static lib rather than esp-idf-sys/hal).
-
-Wired into both [base] (real firmware envs: default/debug/tiny/xlarge) and
-[env:simulator]. The crate makes zero ESP-IDF/std calls, so it's portable to
-any target Rust supports — real firmware envs build it for the ESP32-C3's
-RISC-V target, and the simulator env builds the same source for the host's
-native target instead. This means app code never needs to conditionally
-compile around calling into it (no `#ifndef SIMULATOR` needed per call site).
+PlatformIO pre-build script: compile rust/krosspop_core to a static lib and
+link it in. Wired into [base] (real firmware envs) and [env:simulator]; picks
+the ESP32-C3 RISC-V target or the host's native target accordingly, so app
+code never needs to guard calls with `#ifndef SIMULATOR`. See ROADMAP.md's
+"Rust Integration" section for the full rationale.
 """
 
 import os
