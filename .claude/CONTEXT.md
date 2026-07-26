@@ -41,6 +41,12 @@ Hard-won from a long session of log-instrumented hardware testing; re-read this 
 
 - Registering a setting in `SettingsList.h`'s `getSettingsList()` (`SettingInfo::Toggle`/`Enum`) is necessary but **not sufficient** for it to appear on-device. Each settings screen (e.g. Display) has its own separate curation function (e.g. `buildGroupedDisplaySettingsList()`) that hand-picks which registered settings to actually show, via `addDisplaySetting(StrId::...)`-style calls. Forgetting this step means the setting silently doesn't appear anywhere — no error, no warning.
 
+## Python Tooling
+
+- Plain `python3` on PATH resolves to PlatformIO's bundled venv (`~/.platformio/penv/bin/python3`), not a general-purpose Python — it lacks this repo's dev-script deps (`matplotlib`, `pyserial`, etc.) and shadows the system Python since it sits earlier on PATH.
+- Use the repo's `.venv` (gitignored, Python 3.12 via Homebrew) for `scripts/*.py` dev tools like `debugging_monitor.py`: `.venv/bin/python3 scripts/debugging_monitor.py`, or `source .venv/bin/activate` once per shell. Install/update deps via `.venv/bin/pip install -r scripts/requirements.txt -r lib/EpdFont/scripts/requirements.txt`.
+- The old workaround was invoking `/usr/bin/python3` (macOS system Python 3.9.6) directly, which happened to have these deps installed in its user site-packages — that still works but isn't necessary anymore now `.venv` exists; note `pillow>=12.2.0` requires Python 3.10+, so 3.9.6 can't satisfy current `requirements.txt` anyway.
+
 ## Misc Repo Gotchas
 
 - POSIX TZ signs are inverted from ISO 8601 in `TimeStore::applyTimezone()`: `"UTC-1"` means UTC+1.
