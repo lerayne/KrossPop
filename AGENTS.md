@@ -21,6 +21,7 @@ Project: Open-source e-reader firmware for Xteink X4 (ESP32-C3).
 - Read `.claude/CONTEXT.md` at session start for durable repo-specific gotchas.
 - Keep `.claude/CONTEXT.md` short. Add only reusable findings, not turn-by-turn history.
 - If asked to summarize a session, create `.claude/CONTEXT-YYYY-MM-DD.md` with the relevant findings for that session.
+- Read `ROADMAP.md` when working on KrossPop-specific (K-pop companion) features for planned scope and technical notes.
 
 ## Repo Skills
 

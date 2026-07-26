@@ -36,3 +36,6 @@ lib/EpdFont/scripts/output/
 /site/public/CNAME
 
 dist-publish/
+
+# Rust build artifacts (rust/kpop_core, etc.)
+rust/**/target/
