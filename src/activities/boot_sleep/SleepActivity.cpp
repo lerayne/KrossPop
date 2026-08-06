@@ -18,6 +18,7 @@
 #include "../reader/BookStatsView.h"
 #include "../reader/EpubReaderActivity.h"
 #include "../reader/EpubReaderUtils.h"
+#include "rust_bridge/KrosspopCoreFfi.h"
 #include "../reader/TxtReaderActivity.h"
 #include "../reader/XtcReaderActivity.h"
 #include "AppVersion.h"
@@ -474,6 +475,8 @@ void SleepActivity::onEnter() {
       return renderMinimalStatsSleepScreen();
     case (CrossPointSettings::SLEEP_SCREEN_MODE::DASHBOARD_SLEEP):
       return renderDashboardSleepScreen();
+    case (CrossPointSettings::SLEEP_SCREEN_MODE::CARD_PULL):
+      return renderCardPullSleepScreen();
     default:
       return renderDefaultSleepScreen();
   }
@@ -780,6 +783,43 @@ void SleepActivity::renderDashboardSleepScreen() const {
   theme.drawSleepScreen(renderer, book, &bookStats, &globalStats, progressPercent, chapterTitle.c_str(),
                         sleepCoverFilterInvertsGeneratedScreen());
   renderer.displayBuffer(HalDisplay::FULL_REFRESH, TURN_OFF_SCREEN_AFTER_SLEEP_REFRESH);
+}
+
+void SleepActivity::renderCardPullSleepScreen() const {
+  static constexpr const char* CARD_FOLDER = "/krosspop/photocards";
+
+  const auto files = Storage.listFiles(CARD_FOLDER);
+  if (files.empty()) {
+    LOG_ERR("SLP", "No card images found in %s", CARD_FOLDER);
+    return renderDefaultSleepScreen();
+  }
+
+  // krosspop_pick_card_index is the MVP card-draw decision (see
+  // rust/krosspop_core); random(INT32_MAX) matches the entropy source already
+  // used elsewhere in this file (e.g. selectRandomSleepImage) and, unlike
+  // esp_random(), is available in the simulator build too.
+  const uint32_t index =
+      krosspop_pick_card_index(static_cast<uint32_t>(random(INT32_MAX)), static_cast<uint32_t>(files.size()));
+  if (index >= files.size()) {
+    LOG_ERR("SLP", "krosspop_pick_card_index returned out-of-range index %u for %zu cards", index, files.size());
+    return renderDefaultSleepScreen();
+  }
+
+  const std::string path = std::string(CARD_FOLDER) + "/" + files[index].c_str();
+  FsFile file;
+  if (Storage.openFileForRead("SLP", path, file)) {
+    LOG_INF("SLP", "Loading card: %s", path.c_str());
+    Bitmap bitmap(file, true);
+    if (bitmap.parseHeaders() == BmpReaderError::Ok) {
+      renderBitmapSleepScreen(bitmap);
+      return;
+    }
+    LOG_ERR("SLP", "Failed to parse card BMP: %s", path.c_str());
+  } else {
+    LOG_ERR("SLP", "Failed to open card image: %s", path.c_str());
+  }
+
+  renderDefaultSleepScreen();
 }
 
 void SleepActivity::renderLastScreenSleepScreen() const {
