@@ -924,7 +924,11 @@ inline std::vector<SettingInfo> buildSystemSettingsParentList(const std::vector<
   systemSettings.push_back(SettingInfo::Action(StrId::STR_WIFI_NETWORKS, SettingAction::Network));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_KOREADER_SYNC, SettingAction::KOReaderSync));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_OPDS_SERVERS, SettingAction::OPDSBrowser));
-  systemSettings.push_back(SettingInfo::Action(StrId::STR_CHECK_UPDATES, SettingAction::CheckForUpdates));
+  // Disabled for KrossPop: OtaUpdater still points at CrossInk's release feed
+  // (CROSSINK_OTA_RELEASE_URL in OtaUpdater.cpp), so this would offer to flash
+  // CrossInk firmware over KrossPop. Uncomment once KrossPop publishes its own
+  // releases and that URL is repointed. SD-card updates are unaffected.
+  // systemSettings.push_back(SettingInfo::Action(StrId::STR_CHECK_UPDATES, SettingAction::CheckForUpdates));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_SD_FIRMWARE_UPDATE, SettingAction::SdFirmwareUpdate));
   return systemSettings;
 }
