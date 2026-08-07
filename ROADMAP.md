@@ -335,18 +335,20 @@ technical necessity: see Open Questions/rationale below.
   needs something ESP-IDF-only (see the wrapper-function entry below) — such
   a function would need its own simulator-side stand-in, on a case-by-case
   basis, not a blanket guard.
-- **No `alloc` initially, and this is confirmed additive, not a lock-in:**
-  functions borrow caller-owned `&[u8]` in, return fixed-size data out — no
-  `Vec`/`String`/`Box`. This avoids needing a `#[global_allocator]` wired to
-  the same heap C++ already uses. Enabling `alloc` later only requires
-  registering a global allocator once (ESP32 prior art exists: the
-  `esp-alloc` crate wraps ESP-IDF's heap as a Rust allocator, though whether
-  it fits this Arduino-framework setup specifically needs its own small check
-  when the time comes) — existing borrow-only functions don't need to change.
-  The one place new complexity would appear is a future function that hands
-  an *owned* allocation across the FFI boundary itself (a "who calls free,
-  with which allocator" question) — that cost lands only on such a function
-  when/if it's written, not retroactively.
+- **`alloc` is enabled** (`rust/krosspop_core/src/lib.rs`): a `#[global_allocator]`
+  forwards directly to the same `malloc`/`free` the C++ firmware already
+  links against (no custom C++ wrapper needed — unlike ESP-IDF's own API
+  surface, libc's `malloc`/`free` have a stable, minimal C ABI with no
+  struct-layout/version-drift risk to guard against). This means Rust shares
+  one heap with the rest of the firmware rather than reserving a separate
+  arena, consistent with how every FreeRTOS task here already shares the
+  same ~380 KB pool. Gated `#[cfg(not(test))]`, same reasoning as the panic
+  handler: `cargo test`/rust-analyzer's test build already has std's own
+  global allocator, and registering a second one would conflict.
+  The one place still-open complexity would appear is a future function that
+  hands an *owned* allocation across the FFI boundary itself (a "who calls
+  free, with which allocator" question) — that cost lands only on such a
+  function when/if it's written, not retroactively.
 - **If Rust ever needs something ESP-IDF provides (time, GPIO, etc.):** don't
   reach for `esp-idf-sys`/`bindgen` against ESP-IDF's real API — that would
   mean two independently-built copies of ESP-IDF needing to agree byte-for-

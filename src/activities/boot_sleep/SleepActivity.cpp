@@ -18,7 +18,6 @@
 #include "../reader/BookStatsView.h"
 #include "../reader/EpubReaderActivity.h"
 #include "../reader/EpubReaderUtils.h"
-#include "rust_bridge/KrosspopCoreFfi.h"
 #include "../reader/TxtReaderActivity.h"
 #include "../reader/XtcReaderActivity.h"
 #include "AppVersion.h"
@@ -788,24 +787,24 @@ void SleepActivity::renderDashboardSleepScreen() const {
 void SleepActivity::renderCardPullSleepScreen() const {
   static constexpr const char* CARD_FOLDER = "/krosspop/photocards";
 
-  const auto files = Storage.listFiles(CARD_FOLDER);
-  if (files.empty()) {
+  // MVP: uniform random pick over the folder. Rarity tiers, per-card weights
+  // and anti-repeat cooldown come later with the card database (ROADMAP.md),
+  // which is also what will replace this directory scan.
+  std::vector<std::string> cards;
+  for (const auto& entry : Storage.listFiles(CARD_FOLDER)) {
+    std::string name(entry.c_str());
+    if (name.empty() || name[0] == '.' || !FsHelpers::hasBmpExtension(name)) {
+      continue;
+    }
+    cards.emplace_back(std::move(name));
+  }
+
+  if (cards.empty()) {
     LOG_ERR("SLP", "No card images found in %s", CARD_FOLDER);
     return renderDefaultSleepScreen();
   }
 
-  // krosspop_pick_card_index is the MVP card-draw decision (see
-  // rust/krosspop_core); random(INT32_MAX) matches the entropy source already
-  // used elsewhere in this file (e.g. selectRandomSleepImage) and, unlike
-  // esp_random(), is available in the simulator build too.
-  const uint32_t index =
-      krosspop_pick_card_index(static_cast<uint32_t>(random(INT32_MAX)), static_cast<uint32_t>(files.size()));
-  if (index >= files.size()) {
-    LOG_ERR("SLP", "krosspop_pick_card_index returned out-of-range index %u for %zu cards", index, files.size());
-    return renderDefaultSleepScreen();
-  }
-
-  const std::string path = std::string(CARD_FOLDER) + "/" + files[index].c_str();
+  const std::string path = std::string(CARD_FOLDER) + "/" + cards[random(cards.size())];
   FsFile file;
   if (Storage.openFileForRead("SLP", path, file)) {
     LOG_INF("SLP", "Loading card: %s", path.c_str());
