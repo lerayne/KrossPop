@@ -1,0 +1,122 @@
+{
+  "$comment": [
+    "Single source of truth for the KrossPop card database.",
+    "scripts/krosspop_build_db.py reads this to (a) parse krosspop.fods,",
+    "(b) emit fixed-record .data.bin files, and (c) generate the matching C++",
+    "struct header — so the two sides cannot drift.",
+    "",
+    "Record addressing: a table's ID is NOT stored in the record. Record N",
+    "lives at sizeof(header) + N * recordSize, so the ID is the slot index and",
+    "a lookup is a single seek. Sparse IDs leave zeroed slots (flags bit0 = 0),",
+    "so keep IDs reasonably dense.",
+    "",
+    "Only fields listed here reach the device. Workbook columns that exist for",
+    "human convenience (label, real_name, long_name, tracks_number, and the",
+    "dropdown picker columns) are deliberately not compiled in: the small",
+    "reference tables are meant to be RAM-resident, so every byte counts.",
+    "Adding one later is a schema edit plus a rebuild — no migration, since",
+    "the binaries are regenerated wholesale.",
+    "",
+    "Field offsets derive from declaration order; do not hand-specify them.",
+    "Bump a table's version when its field list changes."
+  ],
+
+  "header": {
+    "$comment": "Prefix of every .data.bin.",
+    "fields": [
+      { "name": "version", "type": "u8" },
+      { "name": "recordSize", "type": "u8" },
+      { "name": "recordCount", "type": "u16" }
+    ]
+  },
+
+  "tables": [
+    {
+      "table": "agencies",
+      "version": 1,
+      "sheet": "agencies",
+      "idColumn": "agency_id",
+      "fields": [
+        { "name": "flags", "type": "u8", "comment": "bit0 = record present" },
+        { "name": "name", "type": "char[32]", "source": "short_name" }
+      ]
+    },
+    {
+      "table": "subsidiaries",
+      "version": 1,
+      "sheet": "subsidiaries",
+      "idColumn": "subsidiary_id",
+      "fields": [
+        { "name": "flags", "type": "u8", "comment": "bit0 = record present" },
+        { "name": "agencyId", "type": "u16", "source": "agency_id", "ref": "agencies" },
+        { "name": "name", "type": "char[32]", "source": "short_name" }
+      ]
+    },
+    {
+      "table": "groups",
+      "version": 1,
+      "sheet": "groups",
+      "idColumn": "group_id",
+      "fields": [
+        { "name": "flags", "type": "u8", "comment": "bit0 = record present" },
+        { "name": "subsidiaryId", "type": "u16", "source": "subsidiary_id", "ref": "subsidiaries" },
+        { "name": "name", "type": "char[32]", "source": "short_name" }
+      ]
+    },
+    {
+      "table": "idols",
+      "version": 1,
+      "sheet": "idols",
+      "idColumn": "idol_id",
+      "fields": [
+        { "name": "flags", "type": "u8", "comment": "bit0 = record present" },
+        { "name": "groupId", "type": "u16", "source": "group_id", "ref": "groups" },
+        { "name": "name", "type": "char[32]", "source": "stage_name" }
+      ]
+    },
+    {
+      "table": "releases",
+      "version": 1,
+      "sheet": "releases",
+      "idColumn": "release_id",
+      "fields": [
+        { "name": "flags", "type": "u8", "comment": "bit0 = record present" },
+        { "name": "groupId", "type": "u16", "source": "group_id", "ref": "groups" },
+        { "name": "year", "type": "u16", "source": "year", "min": 1990, "max": 2100 },
+        { "name": "month", "type": "u8", "source": "month", "min": 1, "max": 12 },
+        {
+          "name": "name",
+          "type": "char[96]",
+          "source": "name",
+          "comment": "album titles get long, e.g. '... (Original Webtoon Soundtrack)'"
+        }
+      ]
+    },
+    {
+      "table": "cards",
+      "version": 1,
+      "sheet": "photocards",
+      "idColumn": "card_id",
+      "fields": [
+        { "name": "flags", "type": "u8", "comment": "bit0 = record present" },
+        { "name": "idolId", "type": "u16", "source": "idol_id", "ref": "idols" },
+        { "name": "releaseId", "type": "u16", "source": "release_id", "ref": "releases" },
+        {
+          "name": "rarityTier",
+          "type": "u8",
+          "source": "rarity_tier",
+          "comment": "1 = most common; higher = rarer",
+          "min": 1,
+          "max": 9
+        },
+        {
+          "name": "filename",
+          "type": "char[48]",
+          "source": "filename",
+          "suffix": ".bmp",
+          "comment": "the .bmp suffix is appended by the build script"
+        }
+      ]
+    }
+  ]
+}
