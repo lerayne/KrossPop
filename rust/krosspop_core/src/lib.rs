@@ -4,6 +4,8 @@
 
 extern crate alloc;
 
+pub mod host;
+
 // Forwards to the same malloc/free the C++ firmware already links against,
 // so Rust shares one heap with everything else instead of reserving its own
 // arena. `not(test)`: cargo test/rust-analyzer's test build already has
