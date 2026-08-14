@@ -41,6 +41,62 @@ load_flags = freetype.FT_LOAD_RENDER | freetype.FT_LOAD_NO_BITMAP
 if args.force_autohint:
     load_flags |= freetype.FT_LOAD_FORCE_AUTOHINT
 
+
+def face_is_bitmap(face):
+    """True for strike fonts (BDF/PCF/OTB, e.g. Terminus), false for outlines.
+
+    A font stack may mix both: Terminus for Latin/Cyrillic with an outline
+    fallback for scripts it lacks, so these decisions are per face.
+    """
+    return not face.is_scalable
+
+
+def face_load_flags(face):
+    """Strikes must not get FT_LOAD_NO_BITMAP — that discards them outright —
+    and render as 1-bit MONO rather than antialiased gray."""
+    if face_is_bitmap(face):
+        return freetype.FT_LOAD_RENDER | freetype.FT_LOAD_TARGET_MONO
+    return load_flags
+
+
+def size_face(face, point_size):
+    """Outlines scale freely; strikes only exist at fixed pixel sizes, so pick
+    the closest one. At 150 DPI, 8/10/12 pt land on 16/20/24 px."""
+    if not face_is_bitmap(face):
+        face.set_char_size(point_size << 6, point_size << 6, 150, 150)
+        return
+    target_px = round(point_size * 150 / 72)
+    heights = [s.height for s in face.available_sizes]
+    if not heights:
+        raise SystemExit(f"{face.family_name}: bitmap font exposes no strikes")
+    face.select_size(min(range(len(heights)), key=lambda i: abs(heights[i] - target_px)))
+
+
+def to_gray_buffer(bitmap):
+    """Flat width*rows list of 8-bit coverage values.
+
+    MONO bitmaps are bit-packed 8 pixels per byte; GRAY bitmaps are one byte
+    per pixel with rows padded out to `pitch`. Normalising both here lets the
+    4-bit/2-bit downsampling below stay identical for either font type.
+    """
+    out = []
+    if bitmap.pixel_mode == freetype.FT_PIXEL_MODE_MONO:
+        for y in range(bitmap.rows):
+            row = y * bitmap.pitch
+            for x in range(bitmap.width):
+                out.append(255 if (bitmap.buffer[row + (x >> 3)] >> (7 - (x & 7))) & 1 else 0)
+    else:
+        for y in range(bitmap.rows):
+            row = y * bitmap.pitch
+            out.extend(bitmap.buffer[row:row + bitmap.width])
+    return out
+
+
+# Sized up front: load_glyph() renders during interval validation below, and a
+# strike font has no usable size until one is selected.
+for face in font_stack:
+    size_face(face, size)
+
 # inclusive unicode code point intervals
 # must not overlap and be in ascending order
 intervals = [
@@ -205,6 +261,22 @@ def fp4_from_ft16_16(val):
     """Convert FreeType 16.16 fixed-point to 12.4 fixed-point with rounding."""
     return (val + (1 << 11)) >> 12
 
+def fp4_from_ft26_6(val):
+    """Convert FreeType 26.6 fixed-point to 12.4 fixed-point with rounding."""
+    return (val + (1 << 1)) >> 2
+
+def glyph_advance_fp4(face):
+    """Horizontal advance in 12.4 fixed-point.
+
+    linearHoriAdvance is the unhinted advance and is preferred for outlines,
+    but FreeType only fills it in for scalable faces — on a strike font it is
+    0, which would stack every glyph at x=0. Strikes carry their advance in
+    advance.x instead, and being a fixed cell it needs no unhinted variant.
+    """
+    if face_is_bitmap(face):
+        return fp4_from_ft26_6(face.glyph.advance.x)
+    return fp4_from_ft16_16(face.glyph.linearHoriAdvance)
+
 def fp4_from_design_units(du, scale):
     """Convert a font design-unit value to 4.4 fixed-point, clamped to int8_t.
 
@@ -253,6 +325,8 @@ pnum_glyph_overrides = {}
 pnum_kern_subs = {}  # face_index -> {original_glyph_name: substitute_glyph_name}
 if args.pnum:
     for face_idx, font_path in enumerate(args.fontstack):
+        if face_is_bitmap(font_stack[face_idx]):
+            continue  # strike fonts have no OpenType features
         subs = extract_pnum_subs(font_path)
         if not subs:
             continue
@@ -285,7 +359,7 @@ def load_glyph(code_point):
         if glyph_index is None:
             glyph_index = face.get_char_index(code_point)
         if glyph_index > 0:
-            face.load_glyph(glyph_index, load_flags)
+            face.load_glyph(glyph_index, face_load_flags(face))
             return face
         face_index += 1
     return None
@@ -309,9 +383,6 @@ for i_start, i_end in unvalidated_intervals:
             start = code_point + 1
     if start != i_end + 1:
         intervals.append((start, i_end))
-
-for face in font_stack:
-    face.set_char_size(size << 6, size << 6, 150, 150)
 
 total_size = 0
 all_glyphs = []
@@ -348,11 +419,12 @@ for i_start, i_end in intervals:
             continue
 
         bitmap = face.glyph.bitmap
+        gray = to_gray_buffer(bitmap)
 
         # Build out 4-bit greyscale bitmap
         pixels4g = []
         px = 0
-        for i, v in enumerate(bitmap.buffer):
+        for i, v in enumerate(gray):
             y = i / bitmap.width
             x = i % bitmap.width
             if x % 2 == 0:
@@ -437,9 +509,10 @@ for i_start, i_end in intervals:
         glyph = GlyphProps(
             width = bitmap.width,
             height = bitmap.rows,
-            # We use linearHoriAdvance (16.16 fixed-point, unhinted) instead of
-            # advance.x (26.6 fixed-point, grid-fitted to whole pixels by hinter)
-            advance_x = fp4_from_ft16_16(face.glyph.linearHoriAdvance),
+            # Outlines: linearHoriAdvance (unhinted) rather than advance.x,
+            # which the hinter grid-fits to whole pixels. Strikes have no
+            # linearHoriAdvance — see glyph_advance_fp4.
+            advance_x = glyph_advance_fp4(face),
             left = face.glyph.bitmap_left,
             top = face.glyph.bitmap_top,
             data_length = len(packed),
@@ -600,6 +673,11 @@ ppem = size * 150.0 / 72.0
 
 kern_map = {}  # (leftCp, rightCp) -> adjust
 for face_idx, cps in face_idx_cps.items():
+    # Strike fonts (BDF/PCF) aren't SFNT containers, so fontTools can't open
+    # them — and they carry no kerning tables anyway (Terminus is monospace,
+    # every advance is identical).
+    if face_is_bitmap(font_stack[face_idx]):
+        continue
     font_path = args.fontstack[face_idx]
     subs = pnum_kern_subs.get(face_idx) if args.pnum else None
     kern_map.update(extract_kerning_fonttools(font_path, cps, ppem, pnum_subs=subs))
@@ -822,6 +900,8 @@ for cp, fi in lig_cp_to_face_idx.items():
 
 ligature_pairs = []
 for face_idx, cps in lig_face_idx_cps.items():
+    if face_is_bitmap(font_stack[face_idx]):
+        continue  # strike fonts have no GSUB table
     font_path = args.fontstack[face_idx]
     ligature_pairs.extend(extract_ligatures_fonttools(font_path, cps))
 

@@ -1,5 +1,24 @@
 #!/bin/bash
 
+# Resolve the interpreter: bare `python` on PATH is often PlatformIO's bundled
+# penv, which lacks freetype-py/fonttools. Prefer the project venv, and let
+# PYTHON=... override.
+if [ -z "${PYTHON:-}" ]; then
+  if [ -x "$(dirname "$0")/../../../.venv/bin/python3" ]; then
+    PYTHON="$(cd "$(dirname "$0")/../../.." && pwd)/.venv/bin/python3"
+  else
+    PYTHON=python3
+  fi
+fi
+if ! "$PYTHON" -c "import freetype" 2>/dev/null; then
+  echo "ERROR: $PYTHON cannot import freetype." >&2
+  echo "  Install deps:  .venv/bin/pip install -r scripts/requirements.txt" >&2
+  echo "  Or override :  PYTHON=/path/to/python $0" >&2
+  exit 1
+fi
+echo "Using interpreter: $PYTHON"
+
+
 set -e
 
 cd "$(dirname "$0")"
@@ -193,7 +212,7 @@ generate_family() {
         fi
       fi
 
-      python fontconvert.py $font_name $size "${font_stack[@]}" "${interval_args[@]}" "${include_args[@]}" "${READING_FONT_RENDER_ARGS[@]}" > $output_path
+      "$PYTHON" fontconvert.py $font_name $size "${font_stack[@]}" "${interval_args[@]}" "${include_args[@]}" "${READING_FONT_RENDER_ARGS[@]}" > $output_path
       echo "Generated $output_path"
     done
   done
@@ -220,7 +239,34 @@ generate_reading_variant() {
 generate_reading_variant ../builtinFonts yes "default"
 generate_reading_variant ../builtinFonts/noemoji no "no-emoji"
 
-# UI Font - Inter
+# UI Font - Terminus (bitmap) with Inter as fallback
+#
+# Terminus is a strike font: it renders as pure 1-bit black/white, so UI text
+# has no antialiasing blur on the e-ink panel. fontconvert.py picks the strike
+# nearest to size_pt * 150/72, so 8/10/12 pt land on the 16/20/24 px strikes.
+#
+# Terminus only covers Latin/Greek/Cyrillic, so Inter and IBM Plex Sans Hebrew
+# stay in the stack behind it for everything else (Hebrew, emoji, Vietnamese).
+# Those fall back to antialiased outlines, which looks slightly different from
+# the crisp primary — only visible to users of those scripts.
+#
+# NOTE: Terminus ships only two weights (n/b) and we use bold as the *regular*
+# UI weight, because its 2px stems hold up on e-ink where the 1px regular
+# stems look washed out. That leaves nothing heavier for the Bold variant, so
+# both currently map to the same strike. Revisit if UI bold needs to be
+# visually distinct.
+TERMINUS_VERSION=4.49.1
+TERMINUS_DIR=downloaded_fonts/terminus-font-${TERMINUS_VERSION}
+
+# downloaded_fonts/ is gitignored, so fetch on first run like build-sd-fonts.py does.
+if [ ! -d "$TERMINUS_DIR" ]; then
+  echo "Downloading Terminus ${TERMINUS_VERSION}..."
+  mkdir -p downloaded_fonts
+  curl -fsSL -o downloaded_fonts/terminus.tar.gz \
+    "https://downloads.sourceforge.net/project/terminus-font/terminus-font-4.49/terminus-font-${TERMINUS_VERSION}.tar.gz" \
+    || { echo "ERROR: could not download Terminus" >&2; exit 1; }
+  tar xzf downloaded_fonts/terminus.tar.gz -C downloaded_fonts/
+fi
 
 UI_FONT_SIZES=(10 12)
 UI_FONT_STYLES=("Regular" "Bold")
@@ -228,22 +274,21 @@ UI_FONT_STYLES=("Regular" "Bold")
 for size in ${UI_FONT_SIZES[@]}; do
   for style in ${UI_FONT_STYLES[@]}; do
     font_name="inter_${size}_$(echo $style | tr '[:upper:]' '[:lower:]')"
+    terminus_px=$(( (size * 150 + 36) / 72 ))
+    terminus_path="${TERMINUS_DIR}/ter-u$(( terminus_px / 2 * 2 ))b.bdf"
     font_path="../builtinFonts/source/Inter/Inter-${style}.ttf"
-    hebrew_path="../builtinFonts/source/IBMPlexSansHebrew/IBMPlexSansHebrew-${style}.ttf"
     output_path="../builtinFonts/${font_name}.h"
-    python fontconvert.py $font_name $size $font_path $hebrew_path $viet_path \
-      --additional-intervals 0x05D0,0x05EA > $output_path
-    echo "Generated $output_path"
+    "$PYTHON" fontconvert.py $font_name $size $terminus_path $font_path > $output_path
+    echo "Generated $output_path (Terminus ${terminus_px}px + Inter fallback)"
   done
 done
 
-# Small UI Font - Inter
+# Small UI Font - Terminus 16px + Inter fallback
 
-python fontconvert.py inter_8_regular 8 \
-  ../builtinFonts/source/Inter/Inter-Regular.ttf \
-  ../builtinFonts/source/IBMPlexSansHebrew/IBMPlexSansHebrew-Regular.ttf \
-  --additional-intervals 0x05D0,0x05EA > ../builtinFonts/inter_8_regular.h
+"$PYTHON" fontconvert.py inter_8_regular 8 \
+  ${TERMINUS_DIR}/ter-u16b.bdf \
+  ../builtinFonts/source/Inter/Inter-Regular.ttf > ../builtinFonts/inter_8_regular.h
 
 echo ""
 echo "Running compression verification..."
-python verify_compression.py ../builtinFonts/
+"$PYTHON" verify_compression.py ../builtinFonts/
