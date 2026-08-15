@@ -18,6 +18,16 @@ if ! "$PYTHON" -c "import freetype" 2>/dev/null; then
 fi
 echo "Using interpreter: $PYTHON"
 
+# Which fonts to (re)generate. Reading fonts rasterise slightly differently
+# across FreeType versions, so regenerating them on a machine other than the
+# one that produced the committed headers churns ~200 files for no intended
+# change. Default to UI only; pass "all" or "reading" when you mean it.
+TARGET="${1:-ui}"
+case "$TARGET" in
+  ui|reading|all) ;;
+  *) echo "usage: $0 [ui|reading|all]   (default: ui)" >&2; exit 2 ;;
+esac
+
 
 set -e
 
@@ -236,8 +246,18 @@ generate_reading_variant() {
 # Reading font variants:
 #   builtinFonts/             default: emoji/symbol fallback + PHM CJK fallback
 #   builtinFonts/noemoji/     OMIT_EMOJI_FONTS: primary fonts only, no emoji and no PHM CJK
-generate_reading_variant ../builtinFonts yes "default"
-generate_reading_variant ../builtinFonts/noemoji no "no-emoji"
+if [[ "$TARGET" == "all" || "$TARGET" == "reading" ]]; then
+  generate_reading_variant ../builtinFonts yes "default"
+  generate_reading_variant ../builtinFonts/noemoji no "no-emoji"
+else
+  echo "Skipping reading fonts (TARGET=$TARGET)."
+  echo ""
+fi
+
+if [[ "$TARGET" == "reading" ]]; then
+  echo "Skipping UI fonts (TARGET=reading)."
+  exit 0
+fi
 
 # UI Font - Terminus (bitmap) with Inter as fallback
 #
@@ -258,6 +278,26 @@ generate_reading_variant ../builtinFonts/noemoji no "no-emoji"
 TERMINUS_VERSION=4.49.1
 TERMINUS_DIR=downloaded_fonts/terminus-font-${TERMINUS_VERSION}
 
+# Terminus strike (bold) per UI point size. Chosen by eye on the device
+# rather than derived: Terminus's nominal size is the full cell, and its
+# strikes are unevenly spaced (…20, 22, 24, 28, 32), so no single formula
+# gives all three. Add an entry here if a new UI size appears.
+terminus_strike_for() {
+  local size="$1" style="${2:-Regular}"
+  case "$size" in
+     # Always bold at the small strikes: Terminus regular is 1px-stemmed
+     # there and washes out on e-ink. Both UI weights map to the same file.
+     8) echo "22b" ;;
+    10) echo "28b" ;;
+     # 32 is the only strike where Terminus regular is already 2px and bold
+     # is a genuine 3px, so this size carries a real weight distinction —
+     # which the UI uses (~87 regular vs ~50 bold call sites).
+    12) if [ "$style" = "Bold" ]; then echo "32b"; else echo "32n"; fi ;;
+     *) echo "ERROR: no Terminus strike mapped for ${size}pt (see terminus_strike_for)" >&2; exit 1 ;;
+  esac
+}
+
+
 # downloaded_fonts/ is gitignored, so fetch on first run like build-sd-fonts.py does.
 if [ ! -d "$TERMINUS_DIR" ]; then
   echo "Downloading Terminus ${TERMINUS_VERSION}..."
@@ -266,6 +306,12 @@ if [ ! -d "$TERMINUS_DIR" ]; then
     "https://downloads.sourceforge.net/project/terminus-font/terminus-font-4.49/terminus-font-${TERMINUS_VERSION}.tar.gz" \
     || { echo "ERROR: could not download Terminus" >&2; exit 1; }
   tar xzf downloaded_fonts/terminus.tar.gz -C downloaded_fonts/
+  # This lives under lib/EpdFont/, so PlatformIO's library dependency finder
+  # compiles any C/C++ it finds here — and the tarball ships win32/*.c, which
+  # fails on <windows.h>. Only the .bdf strikes are needed.
+  find "$TERMINUS_DIR" -type f ! -name "*.bdf" -delete
+  find "$TERMINUS_DIR" -type d -empty -delete
+  rm -f downloaded_fonts/terminus.tar.gz
 fi
 
 UI_FONT_SIZES=(10 12)
@@ -274,8 +320,9 @@ UI_FONT_STYLES=("Regular" "Bold")
 for size in ${UI_FONT_SIZES[@]}; do
   for style in ${UI_FONT_STYLES[@]}; do
     font_name="inter_${size}_$(echo $style | tr '[:upper:]' '[:lower:]')"
-    terminus_px=$(( (size * 150 + 36) / 72 ))
-    terminus_path="${TERMINUS_DIR}/ter-u$(( terminus_px / 2 * 2 ))b.bdf"
+    terminus_px="$(terminus_strike_for "$size" "$style")"
+    terminus_path="${TERMINUS_DIR}/ter-u${terminus_px}.bdf"
+    [ -f "$terminus_path" ] || { echo "ERROR: missing $terminus_path" >&2; exit 1; }
     font_path="../builtinFonts/source/Inter/Inter-${style}.ttf"
     output_path="../builtinFonts/${font_name}.h"
     "$PYTHON" fontconvert.py $font_name $size $terminus_path $font_path > $output_path
@@ -286,7 +333,7 @@ done
 # Small UI Font - Terminus 16px + Inter fallback
 
 "$PYTHON" fontconvert.py inter_8_regular 8 \
-  ${TERMINUS_DIR}/ter-u16b.bdf \
+  "${TERMINUS_DIR}/ter-u$(terminus_strike_for 8).bdf" \
   ../builtinFonts/source/Inter/Inter-Regular.ttf > ../builtinFonts/inter_8_regular.h
 
 echo ""
